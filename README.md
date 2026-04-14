@@ -26,33 +26,77 @@ Backed by an **Obsidian-compatible markdown vault** with **semantic search** (FT
               └─────────────┘
 ```
 
-## Features
+## Prerequisites
 
-- **MCP server** with 8 tools: write, read, search, list, delete, recent, graph, reindex
-- **Obsidian vault** — open in Obsidian to browse/edit visually
-- **Hybrid search** — full-text (FTS5) + semantic vector (sqlite-vec + sentence-transformers)
-- **Wikilinks** — `[[Note Name]]` graph between notes
-- **Agent attribution** — each note tracks which agent wrote it
-- **CLI utility** `mem` for shell access
-- **File-based** — no external DB server needed, just SQLite
+### System requirements
+
+- **Python 3.10+** (tested on 3.13)
+- **pip** (Python package manager)
+- **Git** (for versioning and sync)
+- **Obsidian** (optional, for visual browsing/editing)
+- **sqlite3 CLI** (optional, for debugging the index DB)
+- **jq** (optional, for scripting JSON output)
+
+### Install system packages
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install -y python3 python3-pip git sqlite3 jq
+```
+
+**macOS:**
+```bash
+brew install python3 git sqlite jq
+```
+
+**Windows (WSL2):**
+```bash
+sudo apt install -y python3 python3-pip git sqlite3 jq
+# Obsidian — install on Windows side:
+winget install Obsidian.Obsidian
+```
+
+### Install Python dependencies
+
+```bash
+pip install --user --break-system-packages mcp sentence-transformers sqlite-vec pyyaml numpy
+```
+
+Or in a virtual environment:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install mcp sentence-transformers sqlite-vec pyyaml numpy
+```
+
+> **Note:** `sentence-transformers` downloads the `all-MiniLM-L6-v2` model (~90MB) on first use. It is cached automatically in `~/.cache/torch/sentence_transformers/`.
+
+> **Note:** On Debian 13+ (Trixie) pip requires `--break-system-packages` flag or use `--user`. If you use a venv, omit the flag.
+
+### Verify installation
+
+```bash
+python3 -c "import mcp; print('mcp: OK')"
+python3 -c "import sentence_transformers; print('sentence-transformers: OK')"
+python3 -c "import sqlite_vec; print('sqlite-vec: OK')"
+python3 -c "import yaml; print('pyyaml: OK')"
+python3 -c "import numpy; print('numpy: OK')"
+sqlite3 --version
+```
+
+All should print OK without errors.
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Clone and setup
 
 ```bash
-pip install mcp sentence-transformers sqlite-vec pyyaml
-```
-
-### 2. Clone and setup
-
-```bash
-git clone https://github.com/YOUR_USERNAME/shared-memory.git ~/shared-memory
+git clone https://github.com/hzname/shared-memory.git ~/shared-memory
 cd ~/shared-memory
 python3 mem.py reindex   # build search index from vault
 ```
 
-### 3. Test
+### 2. Test via CLI
 
 ```bash
 # Read a note
@@ -66,9 +110,36 @@ echo "Новый факт о PCA9685" | python3 mem.py write knowledge/pca9685 -
 
 # List notes
 python3 mem.py list --category knowledge
+
+# Recent changes
+python3 mem.py recent
 ```
 
-### 4. Connect agents (see below)
+### 3. Test MCP server directly
+
+```bash
+# Stdio mode (used by agents)
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | python3 server.py
+```
+
+### 4. Connect agents
+
+See [Agent Configuration](#agent-configuration) below.
+
+### 5. Open in Obsidian (optional)
+
+1. Launch Obsidian
+2. "Open folder as vault"
+3. Select the `vault/` directory:
+   - Linux: `~/shared-memory/vault`
+   - Windows/WSL: copy vault to Windows side first (Obsidian cannot open UNC paths `\\wsl.localhost\...`)
+
+```bash
+# Windows/WSL — make vault accessible to Obsidian
+mkdir -p /mnt/c/Users/$USER/ObsidianVaults/shared-memory
+cp -r ~/shared-memory/vault/* /mnt/c/Users/$USER/ObsidianVaults/shared-memory/
+# Then point SHARED_MEMORY_VAULT to the Windows path in agent config
+```
 
 ## MCP Tools
 
@@ -123,8 +194,8 @@ Content here. Link to [[Another Note]].
 |---|---|
 | `knowledge/` | Facts, reference info, project context |
 | `decisions/` | Architectural and design decisions with reasoning |
-| `tasks/` | Tasks (cross-agent task tracking) |
-| `journal/` | Daily logs, event chronicles |
+| `tasks/` | Tasks with attempt history and success tracking |
+| `journal/` | Session logs, daily chronicles |
 | `agents/` | Agent profiles and capabilities |
 
 ### Wikilinks
@@ -147,45 +218,25 @@ mcp:
         SHARED_MEMORY_DB: "/home/YOUR_USER/shared-memory/db/memory.db"
 ```
 
-After editing, restart Hermes. Tools `memory_write`, `memory_read`, etc. become available.
+After editing, restart Hermes session. Tools `memory_write`, `memory_read`, etc. become available automatically.
 
-### QwenCode (~/.qwen/settings.json)
-
-```json
-{
-  "mcpServers": {
-    "shared-memory": {
-      "command": "python3",
-      "args": ["/home/YOUR_USER/shared-memory/server.py"],
-      "transport": "stdio",
-      "env": {
-        "SHARED_MEMORY_VAULT": "/home/YOUR_USER/shared-memory/vault",
-        "SHARED_MEMORY_DB": "/home/YOUR_USER/shared-memory/db/memory.db"
-      }
-    }
-  }
-}
+**WSL + Obsidian** — if vault is on Windows side:
+```yaml
+env:
+  SHARED_MEMORY_VAULT: "/mnt/c/Users/YOUR_USER/ObsidianVaults/shared-memory"
+  SHARED_MEMORY_DB: "/home/YOUR_USER/shared-memory/db/memory.db"
 ```
 
-Or via CLI:
+### QwenCode
 
+Via CLI:
 ```bash
 qwen mcp add shared-memory --transport stdio \
   --command "python3 /home/YOUR_USER/shared-memory/server.py" \
   --env SHARED_MEMORY_VAULT=/home/YOUR_USER/shared-memory/vault
 ```
 
-### OpenClaw (~/.openclaw/openclaw.json)
-
-OpenClaw supports MCP servers via its plugin system or via the `openclaw mcp` command:
-
-```bash
-openclaw mcp set shared-memory --transport stdio \
-  --command "python3 /home/YOUR_USER/shared-memory/server.py"
-```
-
-Or in config:
-
+Or in `~/.qwen/settings.json`:
 ```json
 {
   "mcpServers": {
@@ -202,7 +253,32 @@ Or in config:
 }
 ```
 
-### SSE Mode (for remote/shared access)
+### OpenClaw
+
+Via CLI:
+```bash
+openclaw mcp set shared-memory --transport stdio \
+  --command "python3 /home/YOUR_USER/shared-memory/server.py"
+```
+
+Or in `~/.openclaw/openclaw.json`:
+```json
+{
+  "mcpServers": {
+    "shared-memory": {
+      "command": "python3",
+      "args": ["/home/YOUR_USER/shared-memory/server.py"],
+      "transport": "stdio",
+      "env": {
+        "SHARED_MEMORY_VAULT": "/home/YOUR_USER/shared-memory/vault",
+        "SHARED_MEMORY_DB": "/home/YOUR_USER/shared-memory/db/memory.db"
+      }
+    }
+  }
+}
+```
+
+### SSE Mode (for remote agents)
 
 If agents are on different machines, run the server in SSE mode:
 
@@ -210,8 +286,7 @@ If agents are on different machines, run the server in SSE mode:
 python3 ~/shared-memory/server.py --transport sse --port 8765
 ```
 
-Then configure agents to connect via HTTP:
-
+Then configure agents:
 ```json
 {
   "mcpServers": {
@@ -223,21 +298,80 @@ Then configure agents to connect via HTTP:
 }
 ```
 
-## CLI Usage (mem)
+### Agent Usage Guidelines
 
-The `mem` CLI is useful for scripting, cron jobs, and agents without MCP support.
+Agents should follow these conventions when working with shared memory:
+
+**Reading:**
+- Use `memory_recent` at session start to recall context
+- Use `memory_search` to find relevant knowledge before asking the user
+- Use `memory_graph` to discover related notes via wikilinks
+
+**Writing:**
+- Always set `agent` field to your name (Hermes, OpenClaw, QwenCode)
+- Use correct `type`: `fact` for objective info, `decision` for choices made, `task` for active work items, `journal` for session logs
+- Set `confidence` when uncertain (`low`/`medium`)
+- Use `[[wikilinks]]` to connect related notes
+- Add relevant `tags` for filtering
+
+**Conventions:**
+- Note ID format: `category/slug` (e.g. `knowledge/esrm`, `decisions/2026-04-14-cooling`)
+- Slug: lowercase, hyphens instead of spaces
+- Don't delete notes created by other agents — use `status: deprecated` instead
+- Run `memory_reindex` after manual vault edits outside of MCP
+
+**Action Logging (Variant C):**
+
+For tasks with multiple attempts, create a task note and update it with each attempt:
+
+```markdown
+---
+type: task
+tags: [project, component]
+status: blocked|in_progress|completed|cancelled
+confidence: high|medium|low
+success_rate: 0.0-1.0
+agent: Hermes
+---
+
+# Task Title
+
+## Goal
+What needs to be done
+
+## Attempt History
+| # | When | Agent | Approach | Score | Time | Note |
+|---|---|---|---|---|---|---|
+| 1 | 04-14 12:30 | Hermes | docker exec -d | 0 | 5min | Zombie process |
+| 2 | 04-14 13:15 | Hermes | manual exec | 5 | 2min | Works! |
+
+## Root Cause (if found)
+Description
+
+## Lessons Learned
+- What was learned
+
+## Next Step
+Specific action to try
+```
+
+Success scale: 5=full success, 4=success with caveats, 3=partial, 2=fail+lesson, 1=fail+unclear, 0=regression.
+
+`success_rate` = sum of scores / (attempts × 5)
+
+## CLI Usage (mem.py)
 
 ```bash
-# Setup
+# Install globally (optional)
 ln -sf ~/shared-memory/mem.py ~/.local/bin/mem
 
-# Write
+# Write (content from stdin)
 echo "Content" | mem write knowledge/topic --tags "a,b" --agent Hermes --type fact
 
 # Read
 mem read knowledge/topic
 
-# Search
+# Search (modes: hybrid, fts, vector)
 mem search "query" --mode hybrid --limit 10
 
 # List
@@ -250,7 +384,7 @@ mem recent --limit 5
 mem graph                    # full vault graph
 mem graph knowledge/esrm     # links for specific note
 
-# Reindex
+# Reindex (after manual vault edits)
 mem reindex
 ```
 
@@ -260,22 +394,20 @@ mem reindex
 |---|---|---|
 | `SHARED_MEMORY_VAULT` | `~/shared-memory/vault` | Path to Obsidian vault |
 | `SHARED_MEMORY_DB` | `~/shared-memory/db/memory.db` | Path to SQLite index |
-| `SHARED_MEMORY_EMBED_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model |
+| `SHARED_MEMORY_EMBED_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model name |
 
 ## Sync Between Machines
 
-Since the vault is just files, you can sync it with Git:
+Since the vault is just files, sync with Git:
 
 ```bash
 cd ~/shared-memory
-git init
-git remote add origin YOUR_REPO
-git add -A
-git commit -m "init"
-git push
+git add -A && git commit -m "sync $(date +%Y%m%d-%H%M)" && git push
 
-# Auto-sync (add to crontab)
-*/5 * * * * cd ~/shared-memory && git pull --rebase && git add -A && git commit -m "sync $(date +%Y%m%d-%H%M)" && git push
+# Auto-sync via crontab (every 5 minutes)
+crontab -e
+# Add:
+# */5 * * * * cd $HOME/shared-memory && git pull --rebase && git add -A && git commit -m "sync $(date +\%Y\%m\%d-\%H\%M)" && git push
 ```
 
 Or use Syncthing / rsync for real-time sync.
@@ -293,21 +425,47 @@ shared-memory/
 ├── vault/             # Obsidian vault (the actual memory)
 │   ├── knowledge/     # Facts and reference
 │   ├── decisions/     # Design decisions
-│   ├── tasks/         # Cross-agent tasks
-│   ├── journal/       # Daily logs
+│   ├── tasks/         # Tasks with attempt history
+│   ├── journal/       # Session logs
 │   └── agents/        # Agent profiles
 └── db/                # SQLite search index (gitignored)
     └── memory.db
 ```
 
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| `ModuleNotFoundError: No module named 'mcp'` | `pip install --user --break-system-packages mcp sentence-transformers sqlite-vec pyyaml` |
+| Model download hangs on first use | `sentence-transformers` downloads ~90MB model. Check internet connection. |
+| Obsidian can't open vault on WSL | Copy vault to Windows path: `cp -r ~/shared-memory/vault/* /mnt/c/Users/$USER/ObsidianVaults/shared-memory/` |
+| Search returns no results | Run `python3 mem.py reindex` to rebuild the index |
+| `FTS5` errors in server log | SQLite needs FTS5 compiled in. On Debian: `sudo apt install sqlite3` (includes FTS5) |
+| sqlite-vec not found | Vector search is optional — FTS5 works without it. To fix: `pip install sqlite-vec` |
+| Permission denied on vault/ | Check `SHARED_MEMORY_VAULT` env var points to a writable directory |
+| DB locked errors | Only one server process should write at a time. WAL mode is enabled by default for concurrent reads. |
+
 ## Requirements
 
-- Python 3.10+
-- `mcp` — MCP protocol server
-- `sentence-transformers` — embeddings (all-MiniLM-L6-v2, ~90MB)
-- `sqlite-vec` — vector search in SQLite
-- `pyyaml` — YAML frontmatter parsing
-- `numpy`, `torch` — transitive (from sentence-transformers)
+### Python packages (pip)
+
+| Package | Purpose | Size |
+|---|---|---|
+| `mcp>=1.0` | MCP protocol server | small |
+| `sentence-transformers>=2.0` | Text embeddings (all-MiniLM-L6-v2) | ~90MB model |
+| `sqlite-vec>=0.1` | Vector search in SQLite | small |
+| `pyyaml>=6.0` | YAML frontmatter parsing | small |
+| `numpy` | Array operations (transitive dep) | medium |
+| `torch` | PyTorch backend (transitive, pulled by sentence-transformers) | large |
+
+### System tools (optional but recommended)
+
+| Tool | Purpose |
+|---|---|
+| `sqlite3` CLI | Debug index DB, run manual queries |
+| `jq` | Parse JSON output in scripts |
+| `git` | Version and sync vault between machines |
+| `Obsidian` | Visual browsing/editing of vault |
 
 ## License
 
