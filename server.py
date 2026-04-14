@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+import time
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import (
@@ -42,6 +44,12 @@ VAULT_DIR = os.environ.get("SHARED_MEMORY_VAULT", os.path.expanduser("~/shared-m
 DB_PATH = os.environ.get("SHARED_MEMORY_DB", os.path.expanduser("~/shared-memory/db/memory.db"))
 EMBED_MODEL = os.environ.get("SHARED_MEMORY_EMBED_MODEL", "all-MiniLM-L6-v2")
 EMBED_DIM = 384  # all-MiniLM-L6-v2 output dimension
+
+# Rate limiting
+RATE_LIMIT_MAX_CALLS = int(os.environ.get("SHARED_MEMORY_RATE_LIMIT", "60"))
+RATE_LIMIT_WINDOW = 60  # seconds
+_call_timestamps: list[float] = []
+_rate_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Embedding engine (lazy-loaded)
@@ -108,6 +116,20 @@ def init_vault(vault_dir: str = VAULT_DIR):
         os.makedirs(os.path.join(vault_dir, d), exist_ok=True)
 
 
+def _validate_note_id(note_id: str) -> None:
+    """Validate note_id against path traversal attacks."""
+    if not note_id:
+        raise ValueError("note_id cannot be empty")
+    # Reject obvious traversal patterns
+    if ".." in note_id.split("/"):
+        raise ValueError(f"Invalid note_id (path traversal): {note_id}")
+    if note_id.startswith("/") or note_id.startswith("\\"):
+        raise ValueError(f"Invalid note_id (absolute path): {note_id}")
+    # Reject backslashes and null bytes
+    if "\\" in note_id or "\x00" in note_id:
+        raise ValueError(f"Invalid note_id (illegal characters): {note_id}")
+
+
 def vault_path(note_id: str, category: Optional[str] = None) -> str:
     """Resolve note_id to a vault file path.
     
@@ -115,6 +137,8 @@ def vault_path(note_id: str, category: Optional[str] = None) -> str:
       - 'category/slug'  -> vault/category/slug.md
       - 'slug'           -> search all categories
     """
+    _validate_note_id(note_id)
+
     if "/" in note_id:
         parts = note_id.split("/", 1)
         cat, slug = parts[0], parts[1]
@@ -125,13 +149,21 @@ def vault_path(note_id: str, category: Optional[str] = None) -> str:
         for d in VAULT_SUBDIRS:
             candidate = os.path.join(VAULT_DIR, d, f"{note_id}.md")
             if os.path.exists(candidate):
+                # Verify resolved path is under vault
+                real = os.path.abspath(candidate)
+                if not real.startswith(os.path.abspath(VAULT_DIR)):
+                    raise ValueError(f"Path escapes vault: {note_id}")
                 return candidate
         # default to knowledge
         cat, slug = "knowledge", note_id
 
     if not slug.endswith(".md"):
         slug += ".md"
-    return os.path.join(VAULT_DIR, cat, slug)
+    result = os.path.join(VAULT_DIR, cat, slug)
+    # Final check: resolved path must be under vault root
+    if not os.path.abspath(result).startswith(os.path.abspath(VAULT_DIR)):
+        raise ValueError(f"Path escapes vault: {note_id}")
+    return result
 
 
 def list_all_notes(vault_dir: str = VAULT_DIR) -> list[dict]:
@@ -536,6 +568,27 @@ async def _read(note_id: str) -> Optional[str]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    # Rate limiting: sliding window
+    now = time.monotonic()
+    with _rate_lock:
+        cutoff = now - RATE_LIMIT_WINDOW
+        while _call_timestamps and _call_timestamps[0] < cutoff:
+            _call_timestamps.pop(0)
+        if len(_call_timestamps) >= RATE_LIMIT_MAX_CALLS:
+            return [TextContent(
+                type="text",
+                text=f"Rate limit exceeded: {RATE_LIMIT_MAX_CALLS} calls per {RATE_LIMIT_WINDOW}s. "
+                     f"Set SHARED_MEMORY_RATE_LIMIT env to adjust."
+            )]
+        _call_timestamps.append(now)
+
+    try:
+        return await _call_tool_impl(name, arguments)
+    except ValueError as e:
+        return [TextContent(type="text", text=f"Error: {e}")]
+
+
+async def _call_tool_impl(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     if name == "memory_write":
         fpath = await _write(
             note_id=arguments["note_id"],
@@ -726,6 +779,7 @@ async def main():
 
     parser = argparse.ArgumentParser(description="Shared Memory MCP Server")
     parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1", help="Host for SSE transport (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Port for SSE transport")
     args = parser.parse_args()
 
@@ -744,7 +798,7 @@ async def main():
                 sse.get_post_endpoint("/messages"),
             ],
         )
-        uvicorn.run(app, host="0.0.0.0", port=args.port)
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

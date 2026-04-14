@@ -23,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from server import (
     init_vault, init_db, _write, _read, search_fts, search_vector,
-    list_all_notes, vault_path, extract_wikilinks, parse_frontmatter, reindex_all
+    list_all_notes, vault_path, extract_wikilinks, parse_frontmatter,
+    reindex_all, get_db, _db_lock
 )
 
 
@@ -116,6 +117,17 @@ def cmd_delete(args):
         print(f"Note not found: {args.note_id}", file=sys.stderr)
         sys.exit(1)
     os.remove(fpath)
+    # Clean up search index (mirrors server.py memory_delete logic)
+    conn = get_db()
+    with _db_lock:
+        conn.execute("DELETE FROM notes WHERE note_id = ?", (args.note_id,))
+        conn.execute("DELETE FROM notes_fts WHERE note_id = ?", (args.note_id,))
+        try:
+            conn.execute("DELETE FROM notes_vec WHERE note_id = ?", (args.note_id,))
+        except Exception:
+            pass
+        conn.commit()
+    conn.close()
     print(f"Deleted: {args.note_id}")
 
 
@@ -135,7 +147,7 @@ def cmd_graph(args):
         if not os.path.exists(fpath):
             print(f"Note not found: {args.note_id}", file=sys.stderr)
             sys.exit(1)
-        with open(fpath) as f:
+        with open(fpath, encoding="utf-8") as f:
             content = f.read()
         _, body = parse_frontmatter(content)
         links = extract_wikilinks(body)
@@ -144,7 +156,7 @@ def cmd_graph(args):
         for n in all_notes:
             if n["id"] == args.note_id:
                 continue
-            with open(n["path"]) as f:
+            with open(n["path"], encoding="utf-8") as f:
                 c = f.read()
             _, b = parse_frontmatter(c)
             if slug in extract_wikilinks(b) or args.note_id in extract_wikilinks(b):
@@ -158,7 +170,7 @@ def cmd_graph(args):
     else:
         edges = []
         for n in all_notes:
-            with open(n["path"]) as f:
+            with open(n["path"], encoding="utf-8") as f:
                 content = f.read()
             _, body = parse_frontmatter(content)
             for link in extract_wikilinks(body):
