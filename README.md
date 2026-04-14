@@ -283,8 +283,14 @@ Or in `~/.openclaw/openclaw.json`:
 If agents are on different machines, run the server in SSE mode:
 
 ```bash
+# Localhost only (default, secure)
 python3 ~/shared-memory/server.py --transport sse --port 8765
+
+# Accessible from other machines (use with caution — no auth)
+python3 ~/shared-memory/server.py --transport sse --host 0.0.0.0 --port 8765
 ```
+
+> **Security note:** SSE transport has no built-in authentication. The default `--host 127.0.0.1` limits access to the local machine. Binding to `0.0.0.0` exposes the server to the network — use a firewall or reverse proxy with auth in production.
 
 Then configure agents:
 ```json
@@ -417,6 +423,7 @@ mem reindex
 | `SHARED_MEMORY_VAULT` | `~/shared-memory/vault` | Path to Obsidian vault |
 | `SHARED_MEMORY_DB` | `~/shared-memory/db/memory.db` | Path to SQLite index |
 | `SHARED_MEMORY_EMBED_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model name |
+| `SHARED_MEMORY_RATE_LIMIT` | `60` | Max MCP tool calls per 60s window |
 
 ## Sync Between Machines
 
@@ -466,6 +473,8 @@ shared-memory/
 | sqlite-vec not found | Vector search is optional — FTS5 works without it. To fix: `pip install sqlite-vec` |
 | Permission denied on vault/ | Check `SHARED_MEMORY_VAULT` env var points to a writable directory |
 | DB locked errors | Only one server process should write at a time. WAL mode is enabled by default for concurrent reads. |
+| Rate limit exceeded | Increase `SHARED_MEMORY_RATE_LIMIT` env var (default: 60 calls/min). |
+| `Error: Invalid note_id (path traversal)` | Note IDs cannot contain `..`, `/` prefix, or backslashes. Use `category/slug` format. |
 
 ## Requirements
 
