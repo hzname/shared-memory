@@ -1,0 +1,23 @@
+# Database (regenerated from vault)
+db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Embeddings cache
+*.gguf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Obsidian workspace
+.obsidian/
