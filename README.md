@@ -359,6 +359,28 @@ Success scale: 5=full success, 4=success with caveats, 3=partial, 2=fail+lesson,
 
 `success_rate` = sum of scores / (attempts × 5)
 
+## Agent Awareness Plugins
+
+Each agent can connect to shared-memory automatically via hooks/plugins that:
+1. **Recall context** before each LLM turn (`pre_llm_call`)
+2. **Warn on failures** before tool execution (`pre_tool_call`)
+3. **Log results** after tool execution (`post_tool_call`)
+
+Full guide with ready-to-use plugin code: **[docs/agent-awareness-plugins.md](docs/agent-awareness-plugins.md)**
+
+| Agent | Hook System | Inject Context | Block Tools | Log Results |
+|-------|-------------|----------------|-------------|-------------|
+| **Hermes** | Plugin (`ctx.register_hook`) | Yes (`pre_llm_call`) | Yes (`pre_tool_call`) | Yes (`post_tool_call`) |
+| **OpenClaw** | Gateway hooks (JS) | Limited | No | Gateway events |
+| **QwenCode** | MCP + skills | Via skill | No | Via skill |
+
+Quick install for Hermes:
+```bash
+mkdir -p ~/.hermes/plugins/shared-memory-awareness
+cp docs/plugins/hermes/{plugin.yaml,__init__.py,hooks.py} ~/.hermes/plugins/shared-memory-awareness/
+hermes  # plugin loads automatically
+```
+
 ## CLI Usage (mem.py)
 
 ```bash

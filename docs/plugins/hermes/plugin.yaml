@@ -1,0 +1,7 @@
+name: shared-memory-awareness
+version: 1.0.0
+description: Inject shared-memory experience into agent decisions — context recall, tool-call warnings, result logging
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call

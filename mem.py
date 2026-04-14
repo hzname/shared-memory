@@ -66,6 +66,11 @@ def cmd_search(args):
             if vr["id"] not in seen:
                 results.append(vr)
 
+    if getattr(args, "json", False):
+        # Machine-readable JSON output
+        print(json.dumps(results[:args.limit], ensure_ascii=False))
+        return
+
     if not results:
         print("No results found.")
         return
@@ -194,6 +199,7 @@ def main():
     p_search.add_argument("query")
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--mode", choices=["hybrid", "fts", "vector"], default="hybrid")
+    p_search.add_argument("--json", action="store_true", help="Output as JSON (for machine consumption)")
 
     # list
     p_list = sub.add_parser("list", help="List notes")
